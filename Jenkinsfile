@@ -17,7 +17,7 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                echo 'Checking out source code from GitHub'
+                echo 'Checking out source code'
                 checkout scm
             }
         }
@@ -28,9 +28,11 @@ pipeline {
                     set -e
 
                     python3 --version
+
                     python3 -m venv .venv
 
                     .venv/bin/python -m pip install --upgrade pip
+
                     .venv/bin/python -m pip install -r requirements.txt
                 '''
             }
@@ -40,7 +42,9 @@ pipeline {
             steps {
                 sh '''
                     set -e
+
                     .venv/bin/python -m py_compile app.py
+
                     echo "Python syntax check passed"
                 '''
             }
@@ -50,6 +54,7 @@ pipeline {
             steps {
                 sh '''
                     set -e
+
                     .venv/bin/python -m pytest -v
                 '''
             }
@@ -60,11 +65,11 @@ pipeline {
                 sh '''
                     set -e
 
-                    sudo docker build \
+                    docker build \
                         -t ${APP_NAME}:${IMAGE_TAG} \
                         -t ${APP_NAME}:latest .
 
-                    sudo docker images ${APP_NAME}
+                    docker images ${APP_NAME}
                 '''
             }
         }
@@ -77,22 +82,24 @@ pipeline {
                     CONTAINER_NAME="${APP_NAME}-test-${BUILD_NUMBER}"
 
                     cleanup() {
-                        sudo docker rm -f "$CONTAINER_NAME" \
+                        docker rm -f "$CONTAINER_NAME" \
                             >/dev/null 2>&1 || true
                     }
 
                     trap cleanup EXIT
 
-                    sudo docker run -d \
+                    docker run -d \
                         --name "$CONTAINER_NAME" \
                         -p 127.0.0.1:${SMOKE_TEST_PORT}:${CONTAINER_PORT} \
                         "${APP_NAME}:${IMAGE_TAG}"
 
-                    echo "Waiting for application to start..."
+                    echo "Waiting for application..."
 
                     for i in $(seq 1 15); do
+
                         if curl -fsS \
                             http://127.0.0.1:${SMOKE_TEST_PORT}/health; then
+
                             echo ""
                             echo "Docker smoke test PASSED"
                             exit 0
@@ -102,7 +109,9 @@ pipeline {
                     done
 
                     echo "Docker smoke test FAILED"
-                    sudo docker logs "$CONTAINER_NAME"
+
+                    docker logs "$CONTAINER_NAME"
+
                     exit 1
                 '''
             }
@@ -111,11 +120,11 @@ pipeline {
 
     post {
         success {
-            echo 'CI Pipeline SUCCESS: Tests passed and Docker smoke test completed.'
+            echo 'SUCCESS: CI pipeline completed successfully!'
         }
 
         failure {
-            echo 'CI Pipeline FAILED: Check the failed stage in Console Output.'
+            echo 'FAILURE: Check the failed stage in Console Output.'
         }
 
         always {
