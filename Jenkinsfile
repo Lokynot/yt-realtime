@@ -6,43 +6,65 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    environment {
+        APP_NAME = 'yt-realtime'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        CONTAINER_PORT = '8000'
+        SMOKE_TEST_PORT = '18000'
+    }
+
     stages {
 
         stage('Checkout') {
             steps {
-                echo 'Checking out project source code'
+                echo 'Checking out source code from GitHub'
                 checkout scm
             }
         }
 
-        stage('Install Dependencies') {
-    steps {
-        sh '''
-            python3 --version
-            python3 -m venv .venv
-            .venv/bin/python -m pip install --upgrade pip
-            .venv/bin/python -m pip install -r requirements.txt
-        '''
-    }
-}
+        stage('Python Environment Setup') {
+            steps {
+                sh '''
+                    set -e
+
+                    python3 --version
+                    python3 -m venv .venv
+
+                    .venv/bin/python -m pip install --upgrade pip
+                    .venv/bin/python -m pip install -r requirements.txt
+                '''
+            }
+        }
+
         stage('Syntax Check') {
             steps {
-                sh 'python3 -m py_compile app.py'
+                sh '''
+                    set -e
+                    .venv/bin/python -m py_compile app.py
+                    echo "Python syntax check passed"
+                '''
             }
         }
 
         stage('Unit Tests') {
             steps {
-                sh 'python3 -m pytest -v'
+                sh '''
+                    set -e
+                    .venv/bin/python -m pytest -v
+                '''
             }
         }
 
         stage('Docker Build') {
             steps {
                 sh '''
+                    set -e
+
                     sudo docker build \
-                      -t yt-realtime:${BUILD_NUMBER} \
-                      -t yt-realtime:latest .
+                        -t ${APP_NAME}:${IMAGE_TAG} \
+                        -t ${APP_NAME}:latest .
+
+                    sudo docker images ${APP_NAME}
                 '''
             }
         }
@@ -52,28 +74,34 @@ pipeline {
                 sh '''
                     set -eu
 
-                    CONTAINER_NAME="yt-realtime-test-${BUILD_NUMBER}"
+                    CONTAINER_NAME="${APP_NAME}-test-${BUILD_NUMBER}"
 
                     cleanup() {
-                        sudo docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+                        sudo docker rm -f "$CONTAINER_NAME" \
+                            >/dev/null 2>&1 || true
                     }
 
                     trap cleanup EXIT
 
                     sudo docker run -d \
-                      --name "$CONTAINER_NAME" \
-                      -p 127.0.0.1:18000:8000 \
-                      "yt-realtime:${BUILD_NUMBER}"
+                        --name "$CONTAINER_NAME" \
+                        -p 127.0.0.1:${SMOKE_TEST_PORT}:${CONTAINER_PORT} \
+                        "${APP_NAME}:${IMAGE_TAG}"
+
+                    echo "Waiting for application to start..."
 
                     for i in $(seq 1 15); do
-                        if curl -fsS http://127.0.0.1:18000/health; then
-                            echo "Smoke test passed"
+                        if curl -fsS \
+                            http://127.0.0.1:${SMOKE_TEST_PORT}/health; then
+                            echo ""
+                            echo "Docker smoke test PASSED"
                             exit 0
                         fi
+
                         sleep 2
                     done
 
-                    echo "Smoke test failed"
+                    echo "Docker smoke test FAILED"
                     sudo docker logs "$CONTAINER_NAME"
                     exit 1
                 '''
@@ -83,11 +111,11 @@ pipeline {
 
     post {
         success {
-            echo 'CI pipeline completed successfully!'
+            echo 'CI Pipeline SUCCESS: Tests passed and Docker smoke test completed.'
         }
 
         failure {
-            echo 'CI pipeline failed. Check the stage logs.'
+            echo 'CI Pipeline FAILED: Check the failed stage in Console Output.'
         }
 
         always {
